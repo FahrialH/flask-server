@@ -4,36 +4,37 @@ import pywt
 from PIL import Image
 from flask import Flask, request, jsonify
 from flask_sqlalchemy import SQLAlchemy
+from sqlalchemy import text
+from datetime import datetime
 
 # Flask App Initialization
 app = Flask(__name__)
 
-# # mysql database configuration
-# app.config['SQLALCHEMY_DATABASE_URI'] = 'mysql+pymysql://root:@localhost/ecgdb'
-# app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
-# db = SQLAlchemy(app)
+# mysql database configuration
+app.config['SQLALCHEMY_DATABASE_URI'] = 'mysql+pymysql://root:@localhost/ecgdb'
+app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+db = SQLAlchemy(app)
 
-# # Models
-# class User(db.Model):
-#     __tablename__ = 'user'
-#     userid = db.Column(db.Integer, primary_key=True)
-#     email = db.Column(db.String(120), unique=True, nullable=False)
-#     phone_number = db.Column(db.String(15), nullable=False)
-#     password = db.Column(db.String(128), nullable=False)
+class User(db.Model):
+    __tablename__ = 'user'
+    userid = db.Column(db.Integer, primary_key=True)
+    email = db.Column(db.String(120), unique=True, nullable=False)
+    phone_number = db.Column(db.String(15), nullable=False)
+    password = db.Column(db.String(128), nullable=False)
 
-# # class HeartAttack(db.Model):
-#     __tablename__ = 'heart_attack'
-#     userid = db.Column(db.Integer, db.ForeignKey('user.userid'), autoincrement=True, primary_key=True)
-#     sex = db.Column(db.String(10), nullable=False)
-#     age = db.Column(db.Integer, nullable=False)
-#     chest = db.Column(db.String(50), nullable=False)
-#     smoking = db.Column(db.Boolean, nullable=False)
-#     abnormality = db.Column(db.String(50), nullable=False)
+class HeartAttack(db.Model):
+    __tablename__ = 'heart_attack'
+    userid = db.Column(db.Integer, db.ForeignKey('user.userid'), primary_key=True)
+    sex = db.Column(db.String(10), nullable=False)
+    age = db.Column(db.Integer, nullable=False)
+    chest = db.Column(db.String(50), nullable=False)
+    smoking = db.Column(db.Boolean, nullable=False)
+    abnormality = db.Column(db.String(50), nullable=False)
 
-# # class ECG(db.Model):
-#     __tablename__ = 'ecg'
-#     userid = db.Column(db.Integer, db.ForeignKey('user.userid'), primary_key=True)
-#     ecg_scan_key = db.Column(db.String(50), primary_key=True)
+class ECG(db.Model):
+    __tablename__ = 'ecg'
+    userid = db.Column(db.Integer, db.ForeignKey('user.userid'), primary_key=True)
+    ecg_scan_key = db.Column(db.String(50), primary_key=True)
 
 # Parameters
 sample_rate = 512
@@ -52,6 +53,12 @@ def get_cwt_list():
     Process ECG data uploaded as binary and return CWT-transformed segments.
     """
     try:
+        
+        # Validate User ID
+        userid = request.headers.get('userid')
+        if not userid or not User.query.get(userid):
+            return jsonify({"error": "invalid or missing userid"}), 400
+        
         # Read binary data from the request
         raw_data = request.data  # Flask stores raw binary data in request.data
         dtype = np.dtype(np.float32).newbyteorder('>')
@@ -82,8 +89,17 @@ def get_cwt_list():
             resized_segment = segment.resize(output_size)
             item_list.append({"values": list(resized_segment.getdata())})
 
+        # ECG reference to the database
+        ecg_scan_key = f"scan_{datetime.timezone.utc().strftime('%Y%m%d%H%M%S')}"
+        new_ecg = ECG(userid=userid, ecg_scan_key=ecg_scan_key)
+        db.session.add(new_ecg)
+        db.session.commit()
+
         # Return the results as JSON
+        # Perform GET request on raw_data key for ML
         return jsonify({
+            "user_id": userid,
+            "ecg_scan_key": ecg_scan_key,
             "raw_data": data.tolist(),  # Convert NumPy array to list for JSON serialization
             "items": item_list
         }), 200
@@ -93,10 +109,17 @@ def get_cwt_list():
         return jsonify({"error": str(e)}), 500
 
 
+# @app.route('/test_db', methods=['GET'])
+# def test_db():
+#     try:
+#         db.session.execute(text('SELECT 1'))
+#         return jsonify({"message": "Database connection successful!"}), 200
+#     except Exception as e:
+#         return jsonify({"error": str(e)}), 500
+
 if __name__ == '__main__':
     
-    #with app.app_context():
-        #db.create_all()
+    with app.app_context():
+        db.create_all()
     
-    # Run the Flask server on port 8000
     app.run(host='0.0.0.0', port=8000)
