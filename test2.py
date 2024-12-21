@@ -35,6 +35,8 @@ class ECG(db.Model):
     __tablename__ = 'ecg'
     userid = db.Column(db.Integer, db.ForeignKey('user.userid'), primary_key=True)
     ecg_scan_key = db.Column(db.String(50), primary_key=True)
+    raw_ecg_data = db.Column(db.LargeBinary)
+
 
 # Parameters
 sample_rate = 512
@@ -47,17 +49,52 @@ waveletname = 'gaus1'
 n_choices = 9
 rpeak_offset = 2
 
+@app.route('/register', methods=['POST'])
+def register_user():
+    try:
+        # Get user data from the request
+        data = request.get_json()
+        email = data.get('email')
+        phone_number = data.get('phone_number')
+        password = data.get('password')
+
+        # Validation
+        if not email or not phone_number or not password:
+            return jsonify({"error": "Missing required fields"}), 400
+
+        # Existing user Validation
+        existing_user = User.query.filter((User.email == email)).first()
+        if existing_user:
+            return jsonify({"error": "User with this email already exists"}), 400
+        # Create new user
+        new_user = User(email=email, phone_number=phone_number, password=password)
+
+        # Add the user to the database
+        db.session.add(new_user)
+        db.session.commit()
+
+        return jsonify({"userid": new_user.userid}), 201
+
+    except Exception as e:
+        print("Error during user registration:", str(e))
+        return jsonify({"error": str(e)}), 500
+
+
 @app.route('/cwt', methods=['GET', 'POST'])
 def get_cwt_list():
     """
     Process ECG data uploaded as binary and return CWT-transformed segments.
     """
     try:
-        
+        # parse json data
+        data = request.get_json()
+
         # Validate User ID
         userid = request.headers.get('userid')
         if not userid or not User.query.get(userid):
             return jsonify({"error": "invalid or missing userid"}), 400
+        
+        userid = data['userid']
         
         # Read binary data from the request
         raw_data = request.data  # Flask stores raw binary data in request.data
@@ -70,6 +107,8 @@ def get_cwt_list():
 
         if len(data) < 18:
             return jsonify({"error": "input data length must be greater than 18"}), 400
+        
+        
         # Process ECG data
         data = nk.ecg_clean(data, sampling_rate=sample_rate)
         processed_data, _ = nk.ecg_process(data, sampling_rate=sample_rate)
@@ -89,9 +128,9 @@ def get_cwt_list():
             resized_segment = segment.resize(output_size)
             item_list.append({"values": list(resized_segment.getdata())})
 
-        # ECG reference to the database
+        # Store raw ecg data
         ecg_scan_key = f"scan_{datetime.timezone.utc().strftime('%Y%m%d%H%M%S')}"
-        new_ecg = ECG(userid=userid, ecg_scan_key=ecg_scan_key)
+        new_ecg = ECG(userid=userid, ecg_scan_key=ecg_scan_key, raw_ecg_data=data.tobytes)
         db.session.add(new_ecg)
         db.session.commit()
 
@@ -109,13 +148,13 @@ def get_cwt_list():
         return jsonify({"error": str(e)}), 500
 
 
-# @app.route('/test_db', methods=['GET'])
-# def test_db():
-#     try:
-#         db.session.execute(text('SELECT 1'))
-#         return jsonify({"message": "Database connection successful!"}), 200
-#     except Exception as e:
-#         return jsonify({"error": str(e)}), 500
+@app.route('/test_db', methods=['GET'])
+def test_db():
+    try:
+        db.session.execute(text('SELECT 1'))
+        return jsonify({"message": "Database connection successful!"}), 200
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 if __name__ == '__main__':
     
