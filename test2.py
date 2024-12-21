@@ -135,7 +135,7 @@ def get_cwt_list():
         db.session.commit()
 
         # Return the results as JSON
-        # Perform GET request on raw_data key for ML
+        # Retrieve the ecg result in json format by performing GET request on "raw_data" 
         return jsonify({
             "user_id": userid,
             "ecg_scan_key": ecg_scan_key,
