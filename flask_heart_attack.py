@@ -1,7 +1,6 @@
 from flask import Flask, request, jsonify
 import os
 app = Flask(__name__)
-basedir = os.path.abspath(os.path.dirname(__file__))
 
 @app.route('/heart-attack-prediction', methods=['POST'])
 def get_prediction():
@@ -16,8 +15,6 @@ def get_prediction():
     prediction = make_heart_attack_prediction(sex, age, chest_pain, smoking, abnormality)
     prediction = {'prediction': prediction}
     return jsonify(prediction)
-
-
 
 def make_heart_attack_prediction(sex, age, chest_pain, smoking, abnormality):
     prediction = True

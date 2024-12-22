@@ -12,18 +12,17 @@ def get_prediction():
     age = request.json['age']
     chest_pain = request.json['chest_pain']
     smoking = request.json['smoking']
-    abnormality = request.json['abnormality']
+    anomaly = request.json['anomaly']
 
-    print(sex, age, chest_pain, smoking, abnormality,)
+    print(sex, age, chest_pain, smoking, anomaly,)
 
-    prediction = make_heart_attack_prediction(sex, age, chest_pain, smoking, abnormality)
+    prediction = make_heart_attack_prediction(sex, age, chest_pain, smoking, anomaly)
     prediction = {'prediction': prediction}
     return jsonify(prediction)
 
 def make_heart_attack_prediction(sex, age, chest_pain, smoking, abnormality):
     prediction = True
     # insert ml model here
-
     return prediction
 
 if __name__ == '__main__':
