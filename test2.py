@@ -4,36 +4,39 @@ import pywt
 from PIL import Image
 from flask import Flask, request, jsonify
 from flask_sqlalchemy import SQLAlchemy
+from sqlalchemy import text
+from datetime import datetime
 
 # Flask App Initialization
 app = Flask(__name__)
 
-# # mysql database configuration
-# app.config['SQLALCHEMY_DATABASE_URI'] = 'mysql+pymysql://root:@localhost/ecgdb'
-# app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
-# db = SQLAlchemy(app)
+# mysql database configuration
+app.config['SQLALCHEMY_DATABASE_URI'] = 'mysql+pymysql://root:@localhost/ecgdb'
+app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+db = SQLAlchemy(app)
 
-# # Models
-# class User(db.Model):
-#     __tablename__ = 'user'
-#     userid = db.Column(db.Integer, primary_key=True)
-#     email = db.Column(db.String(120), unique=True, nullable=False)
-#     phone_number = db.Column(db.String(15), nullable=False)
-#     password = db.Column(db.String(128), nullable=False)
+class User(db.Model):
+    __tablename__ = 'user'
+    userid = db.Column(db.Integer, primary_key=True)
+    email = db.Column(db.String(120), unique=True, nullable=False)
+    phone_number = db.Column(db.String(15), nullable=False)
+    password = db.Column(db.String(128), nullable=False)
 
-# # class HeartAttack(db.Model):
-#     __tablename__ = 'heart_attack'
-#     userid = db.Column(db.Integer, db.ForeignKey('user.userid'), autoincrement=True, primary_key=True)
-#     sex = db.Column(db.String(10), nullable=False)
-#     age = db.Column(db.Integer, nullable=False)
-#     chest = db.Column(db.String(50), nullable=False)
-#     smoking = db.Column(db.Boolean, nullable=False)
-#     abnormality = db.Column(db.String(50), nullable=False)
+class HeartAttack(db.Model):
+    __tablename__ = 'heart_attack'
+    userid = db.Column(db.Integer, db.ForeignKey('user.userid'), primary_key=True)
+    sex = db.Column(db.String(10), nullable=False)
+    age = db.Column(db.Integer, nullable=False)
+    chest = db.Column(db.String(50), nullable=False)
+    smoking = db.Column(db.Boolean, nullable=False)
+    abnormality = db.Column(db.String(50), nullable=False)
 
-# # class ECG(db.Model):
-#     __tablename__ = 'ecg'
-#     userid = db.Column(db.Integer, db.ForeignKey('user.userid'), primary_key=True)
-#     ecg_scan_key = db.Column(db.String(50), primary_key=True)
+class ECG(db.Model):
+    __tablename__ = 'ecg'
+    userid = db.Column(db.Integer, db.ForeignKey('user.userid'), primary_key=True)
+    ecg_scan_key = db.Column(db.String(50), primary_key=True)
+    raw_ecg_data = db.Column(db.LargeBinary)
+
 
 # Parameters
 sample_rate = 512
@@ -46,12 +49,53 @@ waveletname = 'gaus1'
 n_choices = 9
 rpeak_offset = 2
 
+@app.route('/register', methods=['POST'])
+def register_user():
+    try:
+        # Get user data from the request
+        data = request.get_json()
+        email = data.get('email')
+        phone_number = data.get('phone_number')
+        password = data.get('password')
+
+        # Validation
+        if not email or not phone_number or not password:
+            return jsonify({"error": "Missing required fields"}), 400
+
+        # Existing user Validation
+        existing_user = User.query.filter((User.email == email)).first()
+        if existing_user:
+            return jsonify({"error": "User with this email already exists"}), 400
+        # Create new user
+        new_user = User(email=email, phone_number=phone_number, password=password)
+
+        # Add the user to the database
+        db.session.add(new_user)
+        db.session.commit()
+
+        return jsonify({"userid": new_user.userid}), 201
+
+    except Exception as e:
+        print("Error during user registration:", str(e))
+        return jsonify({"error": str(e)}), 500
+
+
 @app.route('/cwt', methods=['GET', 'POST'])
 def get_cwt_list():
     """
     Process ECG data uploaded as binary and return CWT-transformed segments.
     """
     try:
+        # parse json data
+        data = request.get_json()
+
+        # Validate User ID
+        userid = request.headers.get('userid')
+        if not userid or not User.query.get(userid):
+            return jsonify({"error": "invalid or missing userid"}), 400
+        
+        userid = data['userid']
+        
         # Read binary data from the request
         raw_data = request.data  # Flask stores raw binary data in request.data
         dtype = np.dtype(np.float32).newbyteorder('>')
@@ -63,6 +107,8 @@ def get_cwt_list():
 
         if len(data) < 18:
             return jsonify({"error": "input data length must be greater than 18"}), 400
+        
+        
         # Process ECG data
         data = nk.ecg_clean(data, sampling_rate=sample_rate)
         processed_data, _ = nk.ecg_process(data, sampling_rate=sample_rate)
@@ -82,8 +128,17 @@ def get_cwt_list():
             resized_segment = segment.resize(output_size)
             item_list.append({"values": list(resized_segment.getdata())})
 
+        # Store raw ecg data
+        ecg_scan_key = f"scan_{datetime.timezone.utc().strftime('%Y%m%d%H%M%S')}"
+        new_ecg = ECG(userid=userid, ecg_scan_key=ecg_scan_key, raw_ecg_data=data.tobytes)
+        db.session.add(new_ecg)
+        db.session.commit()
+
         # Return the results as JSON
+        # Retrieve the ecg result in json format by performing GET request on "raw_data" 
         return jsonify({
+            "user_id": userid,
+            "ecg_scan_key": ecg_scan_key,
             "raw_data": data.tolist(),  # Convert NumPy array to list for JSON serialization
             "items": item_list
         }), 200
@@ -93,10 +148,22 @@ def get_cwt_list():
         return jsonify({"error": str(e)}), 500
 
 
+@app.route('/test_db', methods=['GET'])
+def test_db():
+    try:
+        db.session.execute(text('SELECT 1'))
+        return jsonify({"message": "Database connection successful!"}), 200
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
 if __name__ == '__main__':
     
-    #with app.app_context():
-        #db.create_all()
+    with app.app_context():
+        db.create_all()
     
+<<<<<<< HEAD
     # Run the Flask server on port 8000
     app.run(host='0.0.0.0', port=8000, debug=True)
+=======
+    app.run(host='0.0.0.0', port=8000)
+>>>>>>> f7ef2a9abb89b37eba1828c7a16dcc740883e85f
