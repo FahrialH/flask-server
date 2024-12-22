@@ -11,7 +11,7 @@ from datetime import datetime
 app = Flask(__name__)
 
 # mysql database configuration
-app.config['SQLALCHEMY_DATABASE_URI'] = 'mysql+pymysql://root:@localhost/ecgdb'
+app.config['SQLALCHEMY_DATABASE_URI'] = 'mysql+pymysql://root:@localhost:3307/ecgdb'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 db = SQLAlchemy(app)
 
@@ -50,6 +50,7 @@ n_choices = 9
 rpeak_offset = 2
 
 @app.route('/register', methods=['POST'])
+@app.route('/register/', methods=['POST'])
 def register_user():
     try:
         # Get user data from the request
@@ -79,23 +80,44 @@ def register_user():
         print("Error during user registration:", str(e))
         return jsonify({"error": str(e)}), 500
 
+@app.route('/login', methods=['POST'])
+@app.route('/login/', methods=['POST'])
+def login_user():
+    try:
+        data = request.get_json()
+        email = data.get('email')
+        password = data.get('password')
+
+        if not email or not password:
+            return jsonify({"error": "Missing required fields"}), 400
+
+        valid_email = "testing@gmail.com"
+        valid_password = "12345678"
+
+        if email == valid_email and password == valid_password:
+            return jsonify({"success": True}), 200
+        else:
+            return jsonify({"error": "Invalid email or password"}), 401
+
+    except Exception as e:
+        print("Error during login:", str(e))
+        return jsonify({"error": str(e)}), 500
+
 
 @app.route('/cwt', methods=['GET', 'POST'])
+@app.route('/cwt/', methods=['GET', 'POST'])
 def get_cwt_list():
     """
     Process ECG data uploaded as binary and return CWT-transformed segments.
     """
     try:
-        # parse json data
-        data = request.get_json()
+        print("Request Headers:", request.headers)
+        if request.content_type != 'application/octet-stream':
+            print("Unsupported Media Type:", request.content_type)
+            return jsonify({"error": "Unsupported Media Type"}), 415
+        else:
+            print("Supported Media Type:", request.content_type)
 
-        # Validate User ID
-        userid = request.headers.get('userid')
-        if not userid or not User.query.get(userid):
-            return jsonify({"error": "invalid or missing userid"}), 400
-        
-        userid = data['userid']
-        
         # Read binary data from the request
         raw_data = request.data  # Flask stores raw binary data in request.data
         dtype = np.dtype(np.float32).newbyteorder('>')
@@ -107,8 +129,7 @@ def get_cwt_list():
 
         if len(data) < 18:
             return jsonify({"error": "input data length must be greater than 18"}), 400
-        
-        
+
         # Process ECG data
         data = nk.ecg_clean(data, sampling_rate=sample_rate)
         processed_data, _ = nk.ecg_process(data, sampling_rate=sample_rate)
@@ -129,17 +150,16 @@ def get_cwt_list():
             item_list.append({"values": list(resized_segment.getdata())})
 
         # Store raw ecg data
-        ecg_scan_key = f"scan_{datetime.timezone.utc().strftime('%Y%m%d%H%M%S')}"
-        new_ecg = ECG(userid=userid, ecg_scan_key=ecg_scan_key, raw_ecg_data=data.tobytes)
+        ecg_scan_key = f"scan_{datetime.now().strftime('%Y%m%d%H%M%S')}"
+        new_ecg = ECG(userid=1, ecg_scan_key=ecg_scan_key, raw_ecg_data=raw_data)
         db.session.add(new_ecg)
         db.session.commit()
 
         # Return the results as JSON
-        # Retrieve the ecg result in json format by performing GET request on "raw_data" 
         return jsonify({
-            "user_id": userid,
+            "user_id": 1,
             "ecg_scan_key": ecg_scan_key,
-            "raw_data": data.tolist(),  # Convert NumPy array to list for JSON serialization
+            "raw_data": data.tolist(),
             "items": item_list
         }), 200
 
