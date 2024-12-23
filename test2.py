@@ -6,6 +6,7 @@ from flask import Flask, request, jsonify
 from flask_sqlalchemy import SQLAlchemy
 from sqlalchemy import text
 from datetime import datetime
+from machine_learning import make_heart_attack_prediction
 
 # Flask App Initialization
 app = Flask(__name__)
@@ -205,11 +206,6 @@ def get_prediction():
     prediction = make_heart_attack_prediction(sex, age, chest_pain, smoking, anomaly)
     prediction = {'prediction': prediction}
     return jsonify(prediction)
-
-def make_heart_attack_prediction(sex, age, chest_pain, smoking, abnormality):
-    prediction = True
-    # insert ml model here
-    return prediction
 
 if __name__ == '__main__':
     
