@@ -6,13 +6,14 @@ from flask import Flask, request, jsonify
 from flask_sqlalchemy import SQLAlchemy
 from sqlalchemy import text
 from datetime import datetime
+import bcrypt
 from machine_learning import make_heart_attack_prediction
 
 # Flask App Initialization
 app = Flask(__name__)
 
 # mysql database configuration
-app.config['SQLALCHEMY_DATABASE_URI'] = 'mysql+pymysql://root:@localhost/ecgdb'
+app.config['SQLALCHEMY_DATABASE_URI'] = 'mysql+pymysql://root:@localhost:3307/ecgdb'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 db = SQLAlchemy(app)
 
@@ -53,60 +54,51 @@ rpeak_offset = 2
 @app.route('/login', methods=['POST'])
 def login():
     try:
-        # Get user data from the request
         data = request.get_json()
-        print(data)
         email = data.get('email')
         phone_number = data.get('phone_number')
         password = data.get('password')
 
-        print(email)
-
         if not password:
-            return jsonify({"error": "This credentials combination does not exists"}), 400
-        
-        # Validation
-        if not email: # 
-            if not phone_number:
-                return jsonify({"error": "Missing fields"}), 400
-            # Use phone number
-            # TODO: add condition for password
-            user = User.query.filter((User.phone_number == phone_number)).first() 
-        else:
-            # use email
-            # TODO: add condition for password
-            user = User.query.filter((User.email == email)).first()
-        
-        if not user:
-            return jsonify({"error": "This credentials combination does not exists"}), 400
+            return jsonify({"error": "This credentials combination does not exists", "status": "failed"}), 400
 
-        return jsonify({"userid": user.userid}), 201
+        if not email:
+            if not phone_number:
+                return jsonify({"error": "Missing fields", "status": "failed"}), 400
+            user = User.query.filter((User.phone_number == phone_number)).first()
+        else:
+            user = User.query.filter((User.email == email)).first()
+
+        if not user:
+            return jsonify({"error": "This credentials combination does not exist", "status": "failed"}), 400
+
+        if not bcrypt.checkpw(password.encode('utf-8'), user.password.encode('utf-8')):
+            return jsonify({"error": "Invalid password", "status": "failed"}), 400
+
+        return jsonify({"userid": user.userid, "status": "success"}), 201
 
     except Exception as e:
-        print("Error during user registration:", str(e))
-        return jsonify({"error": str(e)}), 500
+        print("Error during login:", str(e))
+        return jsonify({"error": str(e), "status": "failed"}), 500
     
 @app.route('/register', methods=['POST'])
 def register_user():
     try:
-        # Get user data from the request
         data = request.get_json()
         email = data.get('email')
         phone_number = data.get('phone_number')
         password = data.get('password')
 
-        # Validation
         if not email or not phone_number or not password:
             return jsonify({"error": "Missing required fields"}), 400
 
-        # Existing user Validation
         existing_user = User.query.filter((User.email == email)).first()
         if existing_user:
             return jsonify({"error": "User with this email already exists"}), 400
-        # Create new user
-        new_user = User(email=email, phone_number=phone_number, password=password)
 
-        # Add the user to the database
+        hashed_password = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt())
+
+        new_user = User(email=email, phone_number=phone_number, password=hashed_password.decode('utf-8'))
         db.session.add(new_user)
         db.session.commit()
 
@@ -211,5 +203,12 @@ if __name__ == '__main__':
     
     with app.app_context():
         db.create_all()
+        existing_admin = User.query.filter_by(email='admin@gmail.com').first()
+        if not existing_admin:
+            admin_password = bcrypt.hashpw("Admin123!".encode('utf-8'), bcrypt.gensalt())
+            admin_user = User(email="admin@gmail.com", phone_number="0980000000", password=admin_password.decode('utf-8'))
+            db.session.add(admin_user)
+            db.session.commit()
+            print("Admin user created: admin@gmail.com")
     
     app.run(host='0.0.0.0', port=8000)
